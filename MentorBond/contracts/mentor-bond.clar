@@ -163,3 +163,76 @@
     (ok true)
   )
 )
+
+;; Update mentor rating
+(define-private (update-mentor-rating (mentor principal) (rating uint))
+  (let ((mentor-profile (default-to { hourly-rate: u0, total-sessions: u0, rating-sum: u0, rating-count: u0, is-active: false, bio: "" }
+                                   (map-get? mentor-profiles { mentor: mentor }))))
+    (map-set mentor-profiles
+      { mentor: mentor }
+      (merge mentor-profile {
+        rating-sum: (+ (get rating-sum mentor-profile) rating),
+        rating-count: (+ (get rating-count mentor-profile) u1)
+      })
+    )
+    (ok true)
+  )
+)
+
+;; Update mentor session count
+(define-private (update-mentor-session-count (mentor principal))
+  (let ((mentor-profile (default-to { hourly-rate: u0, total-sessions: u0, rating-sum: u0, rating-count: u0, is-active: false, bio: "" }
+                                   (map-get? mentor-profiles { mentor: mentor }))))
+    (map-set mentor-profiles
+      { mentor: mentor }
+      (merge mentor-profile { total-sessions: (+ (get total-sessions mentor-profile) u1) })
+    )
+    (ok true)
+  )
+)
+
+;; Update student statistics
+(define-private (update-student-stats (student principal) (amount uint))
+  (let ((student-profile (default-to { total-sessions: u0, total-spent: u0 }
+                                    (map-get? student-profiles { student: student }))))
+    (map-set student-profiles
+      { student: student }
+      {
+        total-sessions: (+ (get total-sessions student-profile) u1),
+        total-spent: (+ (get total-spent student-profile) amount)
+      }
+    )
+    (ok true)
+  )
+)
+
+;; Register as mentor
+(define-public (register-mentor (hourly-rate uint) (bio (string-ascii 500)))
+  (map-set mentor-profiles
+    { mentor: tx-sender }
+    {
+      hourly-rate: hourly-rate,
+      total-sessions: u0,
+      rating-sum: u0,
+      rating-count: u0,
+      is-active: true,
+      bio: bio
+    }
+  )
+  (ok true)
+)
+
+;; Update mentor profile
+(define-public (update-mentor-profile (hourly-rate uint) (bio (string-ascii 500)) (is-active bool))
+  (let ((existing-profile (unwrap! (map-get? mentor-profiles { mentor: tx-sender }) err-not-found)))
+    (map-set mentor-profiles
+      { mentor: tx-sender }
+      (merge existing-profile {
+        hourly-rate: hourly-rate,
+        bio: bio,
+        is-active: is-active
+      })
+    )
+    (ok true)
+  )
+)
