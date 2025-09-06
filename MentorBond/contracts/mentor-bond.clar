@@ -287,3 +287,42 @@
   (var-set platform-fee-percent new-fee-percent)
   (ok true)
 )
+
+;; Read-only functions
+(define-read-only (get-session (session-id uint))
+  (map-get? mentorship-sessions { session-id: session-id })
+)
+
+(define-read-only (get-mentor-profile (mentor principal))
+  (map-get? mentor-profiles { mentor: mentor })
+)
+
+(define-read-only (get-student-profile (student principal))
+  (map-get? student-profiles { student: student })
+)
+
+(define-read-only (get-dispute (session-id uint))
+  (map-get? session-disputes { session-id: session-id })
+)
+
+(define-read-only (get-platform-fee)
+  (var-get platform-fee-percent)
+)
+
+(define-read-only (calculate-mentor-rating (mentor principal))
+  (let ((profile (map-get? mentor-profiles { mentor: mentor })))
+    (if (is-some profile)
+      (let ((p (unwrap-panic profile)))
+        (if (> (get rating-count p) u0)
+          (some (/ (get rating-sum p) (get rating-count p)))
+          none
+        )
+      )
+      none
+    )
+  )
+)
+
+(define-read-only (get-next-session-id)
+  (var-get next-session-id)
+)
