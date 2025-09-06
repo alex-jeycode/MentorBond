@@ -8,7 +8,7 @@
 (define-constant err-session-active (err u106))
 
 (define-data-var next-session-id uint u0)
-(define-data-var platform-fee-percent uint u5) ;; 5% platform fee
+(define-data-var platform-fee-percent uint u5)
 
 (define-map mentorship-sessions
   { session-id: uint }
@@ -56,7 +56,6 @@
   }
 )
 
-;; Create mentorship session
 (define-public (create-session (mentor principal) (amount uint) (description (string-ascii 200)) (duration-blocks uint))
   (let ((session-id (var-get next-session-id)))
     (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
@@ -80,41 +79,48 @@
   )
 )
 
-;; Confirm session completion with rating
-(define-public (confirm-session (session-id uint) (rating uint))
+(define-public (confirm-session-mentor (session-id uint))
   (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found)))
     (asserts! (not (get completed session)) err-session-complete)
     (asserts! (not (get cancelled session)) err-session-active)
-    (asserts! (or (is-eq tx-sender (get student session)) (is-eq tx-sender (get mentor session))) err-unauthorized)
+    (asserts! (is-eq tx-sender (get mentor session)) err-unauthorized)
     
-    (if (is-eq tx-sender (get student session))
-      (begin
-        (map-set mentorship-sessions
-          { session-id: session-id }
-          (merge session { student-confirmed: true })
-        )
-        (if (and (is-some rating) (<= (unwrap-panic rating) u5) (>= (unwrap-panic rating) u1))
-          (try! (update-mentor-rating (get mentor session) (unwrap-panic rating)))
-          true
-        )
-      )
-      (map-set mentorship-sessions
-        { session-id: session-id }
-        (merge session { mentor-confirmed: true })
-      )
+    (map-set mentorship-sessions
+      { session-id: session-id }
+      (merge session { mentor-confirmed: true })
     )
     
     (let ((updated-session (unwrap-panic (map-get? mentorship-sessions { session-id: session-id }))))
       (if (and (get student-confirmed updated-session) (get mentor-confirmed updated-session))
         (try! (complete-session session-id))
-        true
+        (ok true)
       )
     )
-    (ok true)
   )
 )
 
-;; Complete session and transfer funds
+(define-public (confirm-session-student (session-id uint) (rating uint))
+  (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found)))
+    (asserts! (not (get completed session)) err-session-complete)
+    (asserts! (not (get cancelled session)) err-session-active)
+    (asserts! (is-eq tx-sender (get student session)) err-unauthorized)
+    (asserts! (and (<= rating u5) (>= rating u1)) err-invalid-rating)
+    
+    (map-set mentorship-sessions
+      { session-id: session-id }
+      (merge session { student-confirmed: true })
+    )
+    (try! (update-mentor-rating (get mentor session) rating))
+    
+    (let ((updated-session (unwrap-panic (map-get? mentorship-sessions { session-id: session-id }))))
+      (if (and (get student-confirmed updated-session) (get mentor-confirmed updated-session))
+        (try! (complete-session session-id))
+        (ok true)
+      )
+    )
+  )
+)
+
 (define-private (complete-session (session-id uint))
   (let ((session (unwrap-panic (map-get? mentorship-sessions { session-id: session-id })))
         (fee (/ (* (get amount session) (var-get platform-fee-percent)) u100))
@@ -131,7 +137,6 @@
   )
 )
 
-;; Cancel session (only before confirmation)
 (define-public (cancel-session (session-id uint))
   (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found)))
     (asserts! (or (is-eq tx-sender (get student session)) (is-eq tx-sender (get mentor session))) err-unauthorized)
@@ -147,7 +152,6 @@
   )
 )
 
-;; Claim refund for expired sessions
 (define-public (claim-refund (session-id uint))
   (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found)))
     (asserts! (is-eq tx-sender (get student session)) err-unauthorized)
@@ -164,10 +168,10 @@
   )
 )
 
-;; Update mentor rating
 (define-private (update-mentor-rating (mentor principal) (rating uint))
-  (let ((mentor-profile (default-to { hourly-rate: u0, total-sessions: u0, rating-sum: u0, rating-count: u0, is-active: false, bio: "" }
-                                   (map-get? mentor-profiles { mentor: mentor }))))
+  (let ((mentor-profile (default-to 
+                          { hourly-rate: u0, total-sessions: u0, rating-sum: u0, rating-count: u0, is-active: false, bio: "" }
+                          (map-get? mentor-profiles { mentor: mentor }))))
     (map-set mentor-profiles
       { mentor: mentor }
       (merge mentor-profile {
@@ -179,10 +183,10 @@
   )
 )
 
-;; Update mentor session count
 (define-private (update-mentor-session-count (mentor principal))
-  (let ((mentor-profile (default-to { hourly-rate: u0, total-sessions: u0, rating-sum: u0, rating-count: u0, is-active: false, bio: "" }
-                                   (map-get? mentor-profiles { mentor: mentor }))))
+  (let ((mentor-profile (default-to 
+                          { hourly-rate: u0, total-sessions: u0, rating-sum: u0, rating-count: u0, is-active: false, bio: "" }
+                          (map-get? mentor-profiles { mentor: mentor }))))
     (map-set mentor-profiles
       { mentor: mentor }
       (merge mentor-profile { total-sessions: (+ (get total-sessions mentor-profile) u1) })
@@ -191,10 +195,10 @@
   )
 )
 
-;; Update student statistics
 (define-private (update-student-stats (student principal) (amount uint))
-  (let ((student-profile (default-to { total-sessions: u0, total-spent: u0 }
-                                    (map-get? student-profiles { student: student }))))
+  (let ((student-profile (default-to 
+                          { total-sessions: u0, total-spent: u0 }
+                          (map-get? student-profiles { student: student }))))
     (map-set student-profiles
       { student: student }
       {
@@ -206,23 +210,23 @@
   )
 )
 
-;; Register as mentor
 (define-public (register-mentor (hourly-rate uint) (bio (string-ascii 500)))
-  (map-set mentor-profiles
-    { mentor: tx-sender }
-    {
-      hourly-rate: hourly-rate,
-      total-sessions: u0,
-      rating-sum: u0,
-      rating-count: u0,
-      is-active: true,
-      bio: bio
-    }
+  (begin
+    (map-set mentor-profiles
+      { mentor: tx-sender }
+      {
+        hourly-rate: hourly-rate,
+        total-sessions: u0,
+        rating-sum: u0,
+        rating-count: u0,
+        is-active: true,
+        bio: bio
+      }
+    )
+    (ok true)
   )
-  (ok true)
 )
 
-;; Update mentor profile
 (define-public (update-mentor-profile (hourly-rate uint) (bio (string-ascii 500)) (is-active bool))
   (let ((existing-profile (unwrap! (map-get? mentor-profiles { mentor: tx-sender }) err-not-found)))
     (map-set mentor-profiles
@@ -237,7 +241,6 @@
   )
 )
 
-;; Create dispute
 (define-public (create-dispute (session-id uint) (reason (string-ascii 200)))
   (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found)))
     (asserts! (or (is-eq tx-sender (get student session)) (is-eq tx-sender (get mentor session))) err-unauthorized)
@@ -256,7 +259,6 @@
   )
 )
 
-;; Resolve dispute (contract owner only)
 (define-public (resolve-dispute (session-id uint) (refund-to-student bool))
   (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found))
         (dispute (unwrap! (map-get? session-disputes { session-id: session-id }) err-not-found)))
@@ -280,15 +282,14 @@
   )
 )
 
-;; Update platform fee (contract owner only)
 (define-public (update-platform-fee (new-fee-percent uint))
-  (asserts! (is-eq tx-sender contract-owner) err-unauthorized)
-  (asserts! (<= new-fee-percent u20) err-invalid-rating) ;; Max 20% fee
-  (var-set platform-fee-percent new-fee-percent)
-  (ok true)
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-unauthorized)
+    (asserts! (<= new-fee-percent u20) err-invalid-rating)
+    (ok (var-set platform-fee-percent new-fee-percent))
+  )
 )
 
-;; Read-only functions
 (define-read-only (get-session (session-id uint))
   (map-get? mentorship-sessions { session-id: session-id })
 )
