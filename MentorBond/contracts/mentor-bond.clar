@@ -55,3 +55,111 @@
     created-at: uint
   }
 )
+
+;; Create mentorship session
+(define-public (create-session (mentor principal) (amount uint) (description (string-ascii 200)) (duration-blocks uint))
+  (let ((session-id (var-get next-session-id)))
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    (map-set mentorship-sessions
+      { session-id: session-id }
+      {
+        mentor: mentor,
+        student: tx-sender,
+        amount: amount,
+        description: description,
+        completed: false,
+        student-confirmed: false,
+        mentor-confirmed: false,
+        created-at: block-height,
+        expires-at: (+ block-height duration-blocks),
+        cancelled: false
+      }
+    )
+    (var-set next-session-id (+ session-id u1))
+    (ok session-id)
+  )
+)
+
+;; Confirm session completion with rating
+(define-public (confirm-session (session-id uint) (rating uint))
+  (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found)))
+    (asserts! (not (get completed session)) err-session-complete)
+    (asserts! (not (get cancelled session)) err-session-active)
+    (asserts! (or (is-eq tx-sender (get student session)) (is-eq tx-sender (get mentor session))) err-unauthorized)
+    
+    (if (is-eq tx-sender (get student session))
+      (begin
+        (map-set mentorship-sessions
+          { session-id: session-id }
+          (merge session { student-confirmed: true })
+        )
+        (if (and (is-some rating) (<= (unwrap-panic rating) u5) (>= (unwrap-panic rating) u1))
+          (try! (update-mentor-rating (get mentor session) (unwrap-panic rating)))
+          true
+        )
+      )
+      (map-set mentorship-sessions
+        { session-id: session-id }
+        (merge session { mentor-confirmed: true })
+      )
+    )
+    
+    (let ((updated-session (unwrap-panic (map-get? mentorship-sessions { session-id: session-id }))))
+      (if (and (get student-confirmed updated-session) (get mentor-confirmed updated-session))
+        (try! (complete-session session-id))
+        true
+      )
+    )
+    (ok true)
+  )
+)
+
+;; Complete session and transfer funds
+(define-private (complete-session (session-id uint))
+  (let ((session (unwrap-panic (map-get? mentorship-sessions { session-id: session-id })))
+        (fee (/ (* (get amount session) (var-get platform-fee-percent)) u100))
+        (mentor-payout (- (get amount session) fee)))
+    (try! (as-contract (stx-transfer? mentor-payout tx-sender (get mentor session))))
+    (try! (as-contract (stx-transfer? fee tx-sender contract-owner)))
+    (map-set mentorship-sessions
+      { session-id: session-id }
+      (merge session { completed: true })
+    )
+    (try! (update-mentor-session-count (get mentor session)))
+    (try! (update-student-stats (get student session) (get amount session)))
+    (ok true)
+  )
+)
+
+;; Cancel session (only before confirmation)
+(define-public (cancel-session (session-id uint))
+  (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found)))
+    (asserts! (or (is-eq tx-sender (get student session)) (is-eq tx-sender (get mentor session))) err-unauthorized)
+    (asserts! (not (get completed session)) err-session-complete)
+    (asserts! (not (or (get student-confirmed session) (get mentor-confirmed session))) err-session-active)
+    
+    (try! (as-contract (stx-transfer? (get amount session) tx-sender (get student session))))
+    (map-set mentorship-sessions
+      { session-id: session-id }
+      (merge session { cancelled: true })
+    )
+    (ok true)
+  )
+)
+
+;; Claim refund for expired sessions
+(define-public (claim-refund (session-id uint))
+  (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found)))
+    (asserts! (is-eq tx-sender (get student session)) err-unauthorized)
+    (asserts! (> block-height (get expires-at session)) err-unauthorized)
+    (asserts! (not (get completed session)) err-session-complete)
+    (asserts! (not (get cancelled session)) err-session-active)
+    
+    (try! (as-contract (stx-transfer? (get amount session) tx-sender (get student session))))
+    (map-set mentorship-sessions
+      { session-id: session-id }
+      (merge session { completed: true })
+    )
+    (ok true)
+  )
+)
