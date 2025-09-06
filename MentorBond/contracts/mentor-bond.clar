@@ -131,8 +131,8 @@
       { session-id: session-id }
       (merge session { completed: true })
     )
-    (try! (update-mentor-session-count (get mentor session)))
-    (try! (update-student-stats (get student session) (get amount session)))
+    (update-mentor-session-count (get mentor session))
+    (update-student-stats (get student session) (get amount session))
     (ok true)
   )
 )
@@ -206,6 +206,7 @@
         total-spent: (+ (get total-spent student-profile) amount)
       }
     )
+    (ok true)
   )
 )
 
