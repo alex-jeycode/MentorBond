@@ -69,8 +69,8 @@
         completed: false,
         student-confirmed: false,
         mentor-confirmed: false,
-        created-at: block-height,
-        expires-at: (+ block-height duration-blocks),
+        created-at: stacks-block-height,
+        expires-at: (+ stacks-block-height duration-blocks),
         cancelled: false
       }
     )
@@ -206,7 +206,6 @@
         total-spent: (+ (get total-spent student-profile) amount)
       }
     )
-    (ok true)
   )
 )
 
