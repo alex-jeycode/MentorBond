@@ -236,3 +236,54 @@
     (ok true)
   )
 )
+
+;; Create dispute
+(define-public (create-dispute (session-id uint) (reason (string-ascii 200)))
+  (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found)))
+    (asserts! (or (is-eq tx-sender (get student session)) (is-eq tx-sender (get mentor session))) err-unauthorized)
+    (asserts! (not (get completed session)) err-session-complete)
+    
+    (map-set session-disputes
+      { session-id: session-id }
+      {
+        disputed-by: tx-sender,
+        reason: reason,
+        resolved: false,
+        created-at: block-height
+      }
+    )
+    (ok true)
+  )
+)
+
+;; Resolve dispute (contract owner only)
+(define-public (resolve-dispute (session-id uint) (refund-to-student bool))
+  (let ((session (unwrap! (map-get? mentorship-sessions { session-id: session-id }) err-not-found))
+        (dispute (unwrap! (map-get? session-disputes { session-id: session-id }) err-not-found)))
+    (asserts! (is-eq tx-sender contract-owner) err-unauthorized)
+    (asserts! (not (get resolved dispute)) err-session-complete)
+    
+    (if refund-to-student
+      (try! (as-contract (stx-transfer? (get amount session) tx-sender (get student session))))
+      (try! (as-contract (stx-transfer? (get amount session) tx-sender (get mentor session))))
+    )
+    
+    (map-set session-disputes
+      { session-id: session-id }
+      (merge dispute { resolved: true })
+    )
+    (map-set mentorship-sessions
+      { session-id: session-id }
+      (merge session { completed: true })
+    )
+    (ok true)
+  )
+)
+
+;; Update platform fee (contract owner only)
+(define-public (update-platform-fee (new-fee-percent uint))
+  (asserts! (is-eq tx-sender contract-owner) err-unauthorized)
+  (asserts! (<= new-fee-percent u20) err-invalid-rating) ;; Max 20% fee
+  (var-set platform-fee-percent new-fee-percent)
+  (ok true)
+)
